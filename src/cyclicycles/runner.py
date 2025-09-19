@@ -1,0 +1,218 @@
+from pathlib import Path
+import numpy as np
+from dwave.system import DWaveSampler, EmbeddingComposite
+from .instance import Instance
+from config import RESULT_DIR, ensure_dir
+
+class Runner:
+    def __init__(self, sampler='6.4'):
+        self.sampler = sampler
+        # Default annealing schedule and h_gain
+        self.anneal_schedule = [
+            [0.0,   1.0],   # start at s=1  (Bx ~ 0)
+            [0.1,   1.0],   # turn on Bz while keeping s=1  (Bx ~ 0)
+            [0.6,   0.35],  # ramp down to s_min -> Bx high
+            [300.0, 1.0],   # ramp back to s=1 (Bx -> 0)
+        ]
+        
+        self.h_gain_schedule = [
+            [0.0,   0.0],   # Bz=0 at t=0 per table
+            [0.1,   0.03],  # raise Bz by 0.1 μs
+            [0.6,   0.03],  # keep Bz ~ constant while Bx rises
+            [300.0, 0.0],   # bring Bz back to 0 by the end
+        ]
+        
+
+
+        # Configure D-Wave sampler based on solver ID
+        if self.sampler == "1.6":  # zephyr
+            self.qpu = DWaveSampler(solver="Advantage2_system1.6")
+        elif self.sampler == "6.4":
+            self.qpu = DWaveSampler(solver="Advantage_system6.4")
+        elif self.sampler == "4.1":
+            self.qpu = DWaveSampler(solver="Advantage_system4.1")
+        else:
+            raise ValueError(f"Invalid solver id: {self.sampler}")
+        self.dw_sampler = self.qpu
+        
+    def execute_cyclic_annealing(self, n_nodes: str | None = None, num_cycles: int = 5, num_reads: int = 1000):
+        """Execute cyclic annealing on a problem instance.
+        
+        Args:
+            n_nodes (str, optional): Number of nodes to select specific instance.
+                If None, executes first available instance.
+            num_cycles (int): Number of cyclic annealing iterations. Defaults to 5.
+            num_reads (int): Number of samples per cycle. Defaults to 1000.
+            
+        Returns:
+            tuple: (final_response, result_data, cycle_energies)
+        """
+    
+        # Load instances
+        instance = Instance()
+        J_terms = instance.load_instances()
+        
+        if not J_terms:
+            raise ValueError("No instances found")
+            
+        # Select instance
+        if n_nodes is None:
+            n_nodes = list(J_terms.keys())[0]
+        elif n_nodes not in J_terms:
+            raise ValueError(f"Instance with {n_nodes} nodes not found")
+            
+        J = J_terms[n_nodes]
+        h = {}  # No linear terms
+        used_qubits = set([i for (i,j) in J.keys()] + [j for (i,j) in J.keys()])
+        initial_state = {qubit: 0 if qubit in used_qubits else 3 for qubit in self.qpu.nodelist}
+
+        # Initialize state for first cycle (all zeros)
+        num_variables = len(used_qubits)
+        
+        cycle_energies = []
+        best_state = initial_state
+        best_energy = float('inf')
+        
+        final_response = None
+        for cycle in range(num_cycles):
+            # Set up reverse annealing parameters
+            reverse_params = dict(
+                anneal_schedule=self.anneal_schedule,
+                initial_state=best_state,
+                reinitialize_state=True,
+                h_gain_schedule=self.h_gain_schedule
+            )
+            
+            # Execute reverse annealing
+            response = self.dw_sampler.sample_ising(
+                h=h,
+                J=J,
+                num_reads=num_reads,
+                **reverse_params
+            )
+            final_response = response  # Keep track of last response
+            print(final_response)
+            
+            # Find best solution from this cycle
+            min_energy_idx = np.argmin(response.record.energy)
+            cycle_min_energy = response.record.energy[min_energy_idx]
+            cycle_energies.append(cycle_min_energy)
+            
+            print(f"Cycle {cycle + 1}/{num_cycles} - Minimum energy: {cycle_min_energy:.6f}")
+            
+            # Update best state if we found a better solution
+            if cycle_min_energy < best_energy:
+                best_energy = cycle_min_energy
+                print(best_state)
+                best_state = {qubit: int(response.record.sample[min_energy_idx][qubit])
+                              if qubit in used_qubits else 3 
+                            for qubit in self.qpu.nodelist}
+        
+        # Save final results
+        results_dir = ensure_dir(RESULT_DIR / str(self.sampler) / f'N_{n_nodes}_realization_1')
+        
+        # Find next available file number
+        existing_files = list(results_dir.glob('[0-9]*.npz'))
+        next_number = 1 if not existing_files else max(int(f.stem) for f in existing_files) + 1
+        results_path = results_dir / f'{next_number}.npz'
+        
+        if final_response is None:
+            raise RuntimeError("No annealing cycles were completed")
+            
+        # Get last response info for metadata
+        final_response_info = {
+            'energies': final_response.record.energy,
+            'solutions': final_response.record.sample,
+            'num_occurrences': final_response.record.num_occurrences,
+            'embedding': final_response.info['embedding_context']['embedding'],
+            'chain_break_fraction': final_response.info['chain_break_fraction'],
+            'timing': final_response.info['timing']
+        }
+        
+        # Save results with cyclic annealing information
+        result_data = {
+            **final_response_info,
+            'anneal_schedule': self.anneal_schedule,
+            'h_gain_schedule': self.h_gain_schedule,
+            'cycle_energies': np.array(cycle_energies),
+            'num_cycles': num_cycles,
+            'best_state': best_state,
+            'best_energy': best_energy
+        }
+        
+        np.savez_compressed(results_path, **result_data)
+        print(f"\nResults saved as: {results_path}")
+        
+        return final_response, result_data, cycle_energies
+        
+    def execute_instance(self, n_nodes: str | None = None, num_reads: int = 1000):
+        """Execute a single annealing run on a problem instance.
+        
+        Args:
+            n_nodes (str, optional): Number of nodes to select specific instance.
+                If None, executes first available instance.
+            num_reads (int, optional): Number of samples to collect. Defaults to 1000.
+            
+        Returns:
+            tuple: (response object, instance_info)
+        """
+        # Load instances
+        instance = Instance()
+        J_terms = instance.load_instances()
+        
+        if not J_terms:
+            raise ValueError("No instances found")
+            
+        # Select instance
+        if n_nodes is None:
+            n_nodes = list(J_terms.keys())[0]
+        elif n_nodes not in J_terms:
+            raise ValueError(f"Instance with {n_nodes} nodes not found")
+            
+        J = J_terms[n_nodes]
+        
+        # Prepare the problem
+        # D-Wave expects dictionary of the form {(i,j): coupling}
+        h = {}  # No linear terms in this case
+        
+        # Execute on D-Wave with custom schedule
+        response = self.dw_sampler.sample_ising(
+            h=h,
+            J=J,
+            num_reads=num_reads,
+            annealing_schedule=self.anneal_schedule,
+            h_gain_schedule=self.h_gain_schedule,
+            return_embedding=True
+        )
+        
+        # Save results
+        results_dir = ensure_dir(RESULT_DIR / str(self.sampler)/ f'N_{n_nodes}_realization_1')
+         
+        # Find the next available file number
+        existing_files = list(results_dir.glob('[0-9]*.npz'))
+        if not existing_files:
+            next_number = 1
+        else:
+            # Extract numbers from filenames and find the maximum
+            numbers = [int(f.stem) for f in existing_files]
+            next_number = max(numbers) + 1
+            
+        results_path = results_dir / f'{next_number}.npz'
+        
+        # Extract relevant information
+        result_data = {
+            'energies': response.record.energy,
+            'solutions': response.record.sample,
+            'num_occurrences': response.record.num_occurrences,
+            'embedding': response.info['embedding_context']['embedding'],
+            'chain_break_fraction': response.info['chain_break_fraction'],
+            'timing': response.info['timing'],
+            'anneal_schedule': self.anneal_schedule,
+            'h_gain_schedule': self.h_gain_schedule
+        }
+        
+        # Save results
+        np.savez_compressed(results_path, **result_data)
+        print(f"Results saved as: {results_path}")
+        
+        return response, result_data
