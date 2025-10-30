@@ -3,12 +3,12 @@ from pathlib import Path
 import os
 
 # Get the project root directory (where data/ folder is)
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 # Define important directories
 DATA_DIR = PROJECT_ROOT / 'data'
-INSTANCE_DIR = DATA_DIR / 'instances'
 RESULT_DIR = DATA_DIR / 'results'
+INSTANCE_DIR = DATA_DIR / 'instances'
 
 def ensure_dir(path: Path) -> Path:
     """Ensure a directory exists and return its Path object."""

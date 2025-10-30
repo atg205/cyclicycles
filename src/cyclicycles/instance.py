@@ -1,11 +1,11 @@
 from pathlib import Path
 import re
 import numpy as np
-from config import DATA_DIR
+from config import INSTANCE_DIR
 
 class Instance:
     def __init__(self):
-        self.data_dir = DATA_DIR
+        self.instance_dir = INSTANCE_DIR
         self.J_terms = {}
         
     def load_instances(self, realization_number: int = 1):
@@ -18,9 +18,7 @@ class Instance:
             dict: Dictionary with node numbers as keys and J terms as values.
         """
         # Get all directories that match the pattern N_*_realization_*
-        print(self.data_dir)
-        print([file for file in self.data_dir.glob(f'N_*_realization_{realization_number}')])
-        for path in self.data_dir.glob(f'N_*_realization_{realization_number}'):
+        for path in self.instance_dir.glob(f'N_*_realization_{realization_number}'):
             if not path.is_dir():
                 continue
                 

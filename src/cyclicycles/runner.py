@@ -1,11 +1,19 @@
 from pathlib import Path
 import numpy as np
+import json
 from dwave.system import DWaveSampler, EmbeddingComposite
 from .instance import Instance
-from config import RESULT_DIR, ensure_dir
+from config import RESULT_DIR, INSTANCE_DIR, DATA_DIR, ensure_dir
 
 class Runner:
     def __init__(self, sampler='6.4'):
+        self.time_path = DATA_DIR / 'time.json'
+        ensure_dir(self.time_path.parent)
+        if not self.time_path.exists():
+            with self.time_path.open('w') as f:
+                json.dump({"time_ms": 0}, f)
+                
+    
         self.sampler = sampler
         # Default annealing schedule and h_gain
         self.anneal_schedule = [
@@ -18,11 +26,9 @@ class Runner:
         self.h_gain_schedule = [
             [0.0,   0.0],   # Bz=0 at t=0 per table
             [0.1,   0.03],  # raise Bz by 0.1 μs
-            [0.6,   0.03],  # keep Bz ~ constant while Bx rises
+            [0.6,   2.8],  # keep Bz ~ constant while Bx rises
             [300.0, 0.0],   # bring Bz back to 0 by the end
         ]
-        
-
 
         # Configure D-Wave sampler based on solver ID
         if self.sampler == "1.6":  # zephyr
@@ -35,7 +41,23 @@ class Runner:
             raise ValueError(f"Invalid solver id: {self.sampler}")
         self.dw_sampler = self.qpu
         
-    def execute_cyclic_annealing(self, n_nodes: str | None = None, num_cycles: int = 5, num_reads: int = 1000):
+
+    def _log_access_time(self, access_time_us: float):
+        """Log the D-Wave access time to time.json.
+        
+        Args:
+            access_time_ms (float): Access time in milliseconds.
+        """
+        try:
+            with self.time_path.open('r') as f:
+                time_dict = json.load(f)
+            time_dict['time_ms'] += access_time_us * 1e-3
+            with self.time_path.open('w') as f:
+                json.dump(time_dict, f)
+        except Exception as e:
+            print(f"Error logging access time: {e}")
+
+    def  execute_cyclic_annealing(self, n_nodes: str | None = None, num_cycles: int = 5, num_reads: int = 1000):
         """Execute cyclic annealing on a problem instance.
         
         Args:
@@ -91,7 +113,10 @@ class Runner:
                 **reverse_params
             )
             final_response = response  # Keep track of last response
-            print(final_response)
+            
+            # Log access time
+            if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
+                self._log_access_time(response.info['timing']['qpu_access_time'])
             
             # Find best solution from this cycle
             min_energy_idx = np.argmin(response.record.energy)
@@ -103,10 +128,8 @@ class Runner:
             # Update best state if we found a better solution
             if cycle_min_energy < best_energy:
                 best_energy = cycle_min_energy
-                print(best_state)
-                best_state = {qubit: int(response.record.sample[min_energy_idx][qubit])
-                              if qubit in used_qubits else 3 
-                            for qubit in self.qpu.nodelist}
+                best_state = {qubit: int(response.record.sample[min_energy_idx][i])
+                              for i,qubit in enumerate(response.variables)}
         
         # Save final results
         results_dir = ensure_dir(RESULT_DIR / str(self.sampler) / f'N_{n_nodes}_realization_1')
@@ -124,8 +147,6 @@ class Runner:
             'energies': final_response.record.energy,
             'solutions': final_response.record.sample,
             'num_occurrences': final_response.record.num_occurrences,
-            'embedding': final_response.info['embedding_context']['embedding'],
-            'chain_break_fraction': final_response.info['chain_break_fraction'],
             'timing': final_response.info['timing']
         }
         
@@ -180,13 +201,14 @@ class Runner:
             h=h,
             J=J,
             num_reads=num_reads,
-            annealing_schedule=self.anneal_schedule,
-            h_gain_schedule=self.h_gain_schedule,
-            return_embedding=True
         )
         
+        # Log access time
+        if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
+            self._log_access_time(response.info['timing']['qpu_access_time'])
+        
         # Save results
-        results_dir = ensure_dir(RESULT_DIR / str(self.sampler)/ f'N_{n_nodes}_realization_1')
+        results_dir = ensure_dir(RESULT_DIR / 'forward' / str(self.sampler)/ f'N_{n_nodes}_realization_1')
          
         # Find the next available file number
         existing_files = list(results_dir.glob('[0-9]*.npz'))
@@ -204,11 +226,7 @@ class Runner:
             'energies': response.record.energy,
             'solutions': response.record.sample,
             'num_occurrences': response.record.num_occurrences,
-            'embedding': response.info['embedding_context']['embedding'],
-            'chain_break_fraction': response.info['chain_break_fraction'],
             'timing': response.info['timing'],
-            'anneal_schedule': self.anneal_schedule,
-            'h_gain_schedule': self.h_gain_schedule
         }
         
         # Save results

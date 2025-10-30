@@ -10,6 +10,10 @@ packages = [{include = "cyclicycles", from = "src"}]
 python = ">=3.11"
 dwave-ocean-sdk = ">=9.0.0,<10.0.0"
 numpy = "*"
+pandas = "^2.3.3"
+matplotlib = "^3.10.7"
+pyqt6 = "^6.10.0"
+tqdm = "^4.67.1"
 
 
 [build-system]
