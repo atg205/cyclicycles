@@ -18,15 +18,15 @@ class Runner:
         # Default annealing schedule and h_gain
         self.anneal_schedule = [
             [0.0,   1.0],   # start at s=1  (Bx ~ 0)
-            [0.1,   1.0],   # turn on Bz while keeping s=1  (Bx ~ 0)
+            [0.1,   1.0],   # turn on Bz while keeping s=1
             [0.6,   0.35],  # ramp down to s_min -> Bx high
             [300.0, 1.0],   # ramp back to s=1 (Bx -> 0)
-        ]
-        
+        ]  # times in microseconds
+
         self.h_gain_schedule = [
             [0.0,   0.0],   # Bz=0 at t=0 per table
             [0.1,   0.03],  # raise Bz by 0.1 μs
-            [0.6,   2.8],  # keep Bz ~ constant while Bx rises
+            [0.6,   0.03],  # keep Bz ~ constant while Bx rises
             [300.0, 0.0],   # bring Bz back to 0 by the end
         ]
 
@@ -71,7 +71,7 @@ class Runner:
         """
     
         # Load instances
-        instance = Instance()
+        instance = Instance(solver=self.sampler)
         J_terms = instance.load_instances()
         
         if not J_terms:

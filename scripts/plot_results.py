@@ -24,6 +24,8 @@ def main():
                        help='Specific instance to plot. If not specified, plots all instances.')
     parser.add_argument('--save_dir', type=str, default=None,
                        help='Directory to save plots. If not specified, displays plots.')
+    parser.add_argument('--num_samples', type=int, choices=[100, 1000], default=1000,
+                       help='Only include results with this exact number of samples.')
     
     args = parser.parse_args()
     
@@ -38,9 +40,13 @@ def main():
     
     # Plot results
     if args.n_nodes is not None:
-        plotter.plot_instance(args.solver, args.n_nodes, save_dir)
+        plotter.plot_instance(args.solver, args.n_nodes, save_dir, num_samples=args.num_samples)
     else:
-        plotter.plot_all_instances(args.solver, save_dir)
+        # Update plot_all_instances to handle num_samples
+        instance_dirs = list(plotter.result_dir.glob(f"{args.solver}/N_*_realization_1"))
+        node_counts = [int(d.name.split('_')[1]) for d in instance_dirs]
+        for n_nodes in sorted(node_counts):
+            plotter.plot_instance(args.solver, n_nodes, save_dir, num_samples=args.num_samples)
 
 if __name__ == '__main__':
     main()

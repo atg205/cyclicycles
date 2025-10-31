@@ -14,27 +14,17 @@ class Plotter:
         """
         self.result_dir = Path(result_dir)
         
-        # Load ground state energies
-        all_data_path = INSTANCE_DIR / 'all_data.npz'
-        try:
-            data = np.load(all_data_path, allow_pickle=True)
-            self.ground_energies = {
-                str(N): energy for N, energy in 
-                zip(data['N_list'], data['ground_energy_list'])
-            }
-        except Exception as e:
-            print(f"Warning: Could not load ground state energies: {e}")
-            self.ground_energies = {}
         
-    def load_results(self, solver_id: str, n_nodes: int) -> tuple[pd.DataFrame, tuple[float, float, int]]:
+    def load_results(self, solver_id: str, n_nodes: int, num_samples: int | None = None) -> tuple[pd.DataFrame, tuple[float, float, float, int]]:
         """Load all results for a specific node count and solver.
         
         Args:
             solver_id: The solver ID (e.g., '4.1', '6.4')
             n_nodes: Number of nodes in the instance
+            num_samples: Only include results with this exact number of samples (100 or 1000)
             
         Returns:
-            tuple: (DataFrame with cyclic results, (forward_mean, forward_std, forward_count))
+            tuple: (DataFrame with cyclic results, (forward_mean, forward_std, forward_min, forward_count))
         """
         # Load cyclic annealing results
         cyclic_path = self.result_dir / solver_id / f'N_{n_nodes}_realization_1'
@@ -43,6 +33,11 @@ class Plotter:
         if cyclic_path.exists():
             for result_file in cyclic_path.glob('*.npz'):
                 data = np.load(result_file, allow_pickle=True)
+                # Check if this file has the required number of samples
+                if num_samples is not None:
+                    total_samples = sum(data['num_occurrences']) if 'num_occurrences' in data else None
+                    if total_samples != num_samples:
+                        continue
                 cycle_energies = data['cycle_energies']
                 cyclic_data.append(cycle_energies)
         
@@ -58,31 +53,52 @@ class Plotter:
             
         # Load forward annealing results
         forward_path = self.result_dir / 'forward' / solver_id / f'N_{n_nodes}_realization_1'
-        forward_stats = (float('inf'), 0.0, 0)  # mean, std, count
+        forward_stats = (float('inf'), 0.0, float('inf'), 0)  # mean, std, min, count
         
         if forward_path.exists():
             energies = []
             for result_file in forward_path.glob('*.npz'):
                 data = np.load(result_file)
+                # Check if this file has the required number of samples
+                if num_samples is not None:
+                    total_samples = sum(data['num_occurrences']) if 'num_occurrences' in data else None
+                    if total_samples != num_samples:
+                        continue
                 energies.append(min(data['energies']))
             if energies:
+                min_energy = float(min(energies))
                 forward_stats = (
                     float(np.mean(energies)),  # mean
                     float(np.std(energies)),   # std
+                    min_energy,                # min
                     len(energies)              # count
                 )
                 
         return df, forward_stats
     
-    def plot_instance(self, solver_id: str, n_nodes: int, save_dir: Path | str | None = None):
+    def plot_instance(self, solver_id: str, n_nodes: int, save_dir: Path | str | None = None,
+                     num_samples: int | None = None):
         """Create plot for a specific instance.
         
         Args:
             solver_id: The solver ID (e.g., '4.1', '6.4')
             n_nodes: Number of nodes in the instance
             save_dir: Optional directory to save the plot
+            num_samples: Only include results with this exact number of samples (100 or 1000)
         """
-        df, forward_stats = self.load_results(solver_id, n_nodes)
+        df, forward_stats = self.load_results(solver_id, n_nodes, num_samples=num_samples)
+
+        # Load ground state energies
+        all_data_path = INSTANCE_DIR / solver_id / 'all_data.npz'
+        try:
+            data = np.load(all_data_path, allow_pickle=True)
+            self.ground_energies = {
+                str(N): energy for N, energy in 
+                zip(data['N_list'], data['ground_energy_list'])
+            }
+        except Exception as e:
+            print(f"Warning: Could not load ground state energies: {e}")
+            self.ground_energies = {}
         
         if df.empty:
             print(f"No data found for N={n_nodes}, solver {solver_id}")
@@ -90,7 +106,8 @@ class Plotter:
             
         # Calculate statistics
         mean = df.mean(axis=1)
-        std = df.std(axis=1)
+        min_per_cycle = df.min(axis=1)
+        max_per_cycle = df.max(axis=1)
         cycles = range(1, len(mean) + 1)
         
         # Create plot
@@ -99,18 +116,25 @@ class Plotter:
         # Plot cyclic annealing results
         n_cyclic = len(df.columns)  # number of cyclic annealing runs
         plt.plot(cycles, mean, 'b-', 
-                label=f'Cyclic Annealing (n={n_cyclic})')
-        plt.fill_between(cycles, mean - std, mean + std, alpha=0.2, color='b')
+                label=f'Cyclic Annealing Mean (n={n_cyclic})')
+        plt.fill_between(cycles, min_per_cycle, max_per_cycle, alpha=0.2, color='b')
+        
+        # Plot lowest cyclic energy found
+        min_cyclic = df.min().min()  # minimum across all cycles and runs
+        plt.axhline(y=min_cyclic, color='b', linestyle=':', 
+                   label='Best Cyclic Result')
         
         # Plot forward annealing result with error bar
-        forward_mean, forward_std, forward_count = forward_stats
+        forward_mean, forward_std, forward_min, forward_count = forward_stats
         if forward_mean != float('inf'):
             plt.axhline(y=forward_mean, color='r', linestyle='--', 
-                       label=f'Forward Annealing (n={forward_count})')
+                       label=f'Forward Annealing Mean (n={forward_count})')
             if forward_count > 1:  # Only show error band if we have multiple runs
-                plt.axhspan(forward_mean - forward_std, 
-                          forward_mean + forward_std,
+                plt.axhspan(forward_min, forward_mean + forward_std,
                           color='r', alpha=0.2)
+                # Plot lowest forward energy found
+                plt.axhline(y=forward_min, color='r', linestyle=':', 
+                          label='Best Forward Result')
             
         # Plot ground state energy if available
         str_n_nodes = str(n_nodes)
@@ -121,7 +145,8 @@ class Plotter:
         
         plt.xlabel('Cycle')
         plt.ylabel('Energy')
-        plt.title(f'Energy vs Cycle (N={n_nodes}, Solver {solver_id})')
+        samples_str = f", {num_samples} samples" if num_samples else ""
+        plt.title(f'Energy vs Cycle (N={n_nodes}, Solver {solver_id}{samples_str})')
         plt.legend()
         plt.grid(True)
         
@@ -131,17 +156,3 @@ class Plotter:
             plt.close()
         else:
             plt.show(block=True)
-            
-    def plot_all_instances(self, solver_id: str, save_dir: Path | str | None = None):
-        """Create plots for all available instances.
-        
-        Args:
-            solver_id: The solver ID (e.g., '4.1', '6.4')
-            save_dir: Optional directory to save the plots
-        """
-        # Find all instance directories
-        instance_dirs = list(self.result_dir.glob(f"{solver_id}/N_*_realization_1"))
-        node_counts = [int(d.name.split('_')[1]) for d in instance_dirs]
-        
-        for n_nodes in sorted(node_counts):
-            self.plot_instance(solver_id, n_nodes, save_dir)

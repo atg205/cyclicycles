@@ -4,9 +4,11 @@ import numpy as np
 from config import INSTANCE_DIR
 
 class Instance:
-    def __init__(self):
-        self.instance_dir = INSTANCE_DIR
+    def __init__(self,solver='4.1'):
         self.J_terms = {}
+        self.solver = solver
+        self.instance_dir = INSTANCE_DIR / solver
+
         
     def load_instances(self, realization_number: int = 1):
         """Load all instances with N_ in folder name from the data directory.
