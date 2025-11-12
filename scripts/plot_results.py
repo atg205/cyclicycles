@@ -18,7 +18,7 @@ from cyclicycles.config import RESULT_DIR
 def main():
     parser = argparse.ArgumentParser(description='Plot annealing results')
     parser.add_argument('--solver', type=str, default='6.4',
-                       choices=['1.6', '4.1', '6.4'],
+                       choices=['1.6','1.7', '4.1', '6.4'],
                        help='D-Wave solver results to plot')
     parser.add_argument('--n_nodes', type=int, default=None,
                        help='Specific instance to plot. If not specified, plots all instances.')
@@ -26,6 +26,9 @@ def main():
                        help='Directory to save plots. If not specified, displays plots.')
     parser.add_argument('--num_samples', type=int, choices=[100, 1000], default=1000,
                        help='Only include results with this exact number of samples.')
+    parser.add_argument('--init', type=str, choices=['forward', 'zero', 'all'], default='all',
+                       help='Which initialization method to show: forward (forward annealing initialized), '
+                            'zero (standard zero initialization), or all (both)')
     
     args = parser.parse_args()
     
@@ -40,13 +43,15 @@ def main():
     
     # Plot results
     if args.n_nodes is not None:
-        plotter.plot_instance(args.solver, args.n_nodes, save_dir, num_samples=args.num_samples)
+        plotter.plot_instance(args.solver, args.n_nodes, save_dir, 
+                            num_samples=args.num_samples, init_type=args.init)
     else:
-        # Update plot_all_instances to handle num_samples
+        # Update plot_all_instances to handle num_samples and init_type
         instance_dirs = list(plotter.result_dir.glob(f"{args.solver}/N_*_realization_1"))
         node_counts = [int(d.name.split('_')[1]) for d in instance_dirs]
         for n_nodes in sorted(node_counts):
-            plotter.plot_instance(args.solver, n_nodes, save_dir, num_samples=args.num_samples)
+            plotter.plot_instance(args.solver, n_nodes, save_dir,
+                                num_samples=args.num_samples, init_type=args.init)
 
 if __name__ == '__main__':
     main()

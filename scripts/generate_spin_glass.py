@@ -15,13 +15,13 @@ def get_qpu_graph(sampler_id: str) -> Set[Tuple[int, int]]:
     """Get the hardware graph for a specific D-Wave QPU.
     
     Args:
-        sampler_id: The QPU identifier ('1.6' or '6.4')
+        sampler_id: The QPU identifier ('1.7' or '6.4')
         
     Returns:
         Set of tuples representing available qubit connections
     """
-    if sampler_id == "1.6":  # Advantage2
-        qpu = DWaveSampler(solver="Advantage2_system1.6")
+    if sampler_id == "1.7":  # Advantage2
+        qpu = DWaveSampler(solver="Advantage2_system1.7")
     elif sampler_id == "6.4":  # Advantage
         qpu = DWaveSampler(solver="Advantage_system6.4")
     else:
@@ -94,7 +94,7 @@ def main():
     parser.add_argument('--n_nodes', type=int, required=True,
                        help='Number of nodes in the instance to generate')
     parser.add_argument('--sampler', type=str, required=True,
-                       choices=['1.6', '6.4'],
+                       choices=['1.7'],
                        help='D-Wave sampler to use (1.6=Advantage2, 6.4=Advantage)')
     parser.add_argument('--realization', type=int, default=1,
                        help='Realization number (default: 1)')
