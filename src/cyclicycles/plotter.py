@@ -17,7 +17,8 @@ class Plotter:
         
     def load_results(self, solver_id: str, n_nodes: int | None = None, num_samples: int | None = None,
                    init_type: str = 'all', instance_type: str = 'static', 
-                   instance_id: str | None = None, num_timepoints: int | None = None) -> tuple[pd.DataFrame, tuple[float, float, float, int]]:
+                   instance_id: str | None = None, num_timepoints: int | None = None,
+                   use_ancilla: bool = False) -> tuple[pd.DataFrame, tuple[float, float, float, float, int, float], float, float]:
         """Load all results for a specific instance and solver.
         
         Args:
@@ -28,24 +29,31 @@ class Plotter:
             instance_type: Either 'static' or 'dynamics'
             instance_id: ID of the dynamics instance (required if instance_type='dynamics')
             num_timepoints: Number of timepoints for dynamics instances
+            use_ancilla: If True, load results with ancilla; if False, load results without ancilla
             
         Returns:
-            tuple: (DataFrame with cyclic results, (forward_mean, forward_std, forward_min, forward_count))
+            tuple: (DataFrame with cyclic results, (forward_mean, forward_q25, forward_q75, forward_min, forward_count, forward_best_percentage), offset, cyclic_best_percentage)
         """
         if instance_type == 'dynamics':
             if instance_id is None or num_timepoints is None:
                 raise ValueError("instance_id and num_timepoints must be specified for dynamics instances")
-            # Load cyclic annealing results
-            cyclic_path = self.result_dir / solver_id / f'dynamics_{instance_id}_timepoints_{num_timepoints}_realization_1'
-            forward_path = self.result_dir / 'forward' / solver_id / f'dynamics_{instance_id}_timepoints_{num_timepoints}'
+            # Build path based on ancilla parameter
+            ancilla_suffix = '_with_ancilla' if use_ancilla else '_no_ancilla'
+            cyclic_path = self.result_dir / solver_id / f'dynamics_{instance_id}_timepoints_{num_timepoints}{ancilla_suffix}_realization_1'
+            forward_path = self.result_dir / 'forward' / solver_id / f'dynamics_{instance_id}_timepoints_{num_timepoints}{ancilla_suffix}'
         else:
             if n_nodes is None:
                 raise ValueError("n_nodes must be specified for static instances")
-            # Load cyclic annealing results
-            cyclic_path = self.result_dir / solver_id / f'N_{n_nodes}_realization_1'
-            forward_path = self.result_dir / 'forward' / solver_id / f'N_{n_nodes}_realization_1'
+            # Build path based on ancilla parameter
+            ancilla_suffix = '_with_ancilla' if use_ancilla else '_no_ancilla'
+            cyclic_path = self.result_dir / solver_id / f'N_{n_nodes}{ancilla_suffix}_realization_1'
+            forward_path = self.result_dir / 'forward' / solver_id / f'N_{n_nodes}{ancilla_suffix}_realization_1'
         
         cyclic_data = []
+        cyclic_best_energy = float('inf')
+        cyclic_best_count = 0
+        cyclic_total_samples = 0
+        offset = 0.0  # Default offset
         
         if cyclic_path.exists():
             for result_file in cyclic_path.glob('*.npz'):
@@ -66,6 +74,22 @@ class Plotter:
                         
                 cycle_energies = data['cycle_energies']
                 cyclic_data.append(cycle_energies)
+                
+                # Track best energy and count for percentage calculation
+                energies = data['energies']
+                num_occurrences = data['num_occurrences']
+                best_energy = np.min(energies)
+                best_count = int(num_occurrences[np.argmin(energies)])
+                total_samples_in_file = int(np.sum(num_occurrences))
+                
+                if best_energy < cyclic_best_energy:
+                    cyclic_best_energy = best_energy
+                    cyclic_best_count = best_count
+                cyclic_total_samples += total_samples_in_file
+                
+                # Extract offset from the first result file (should be the same for all files from the same instance)
+                if 'offset' in data:
+                    offset = float(data['offset'])
         
         # Convert to DataFrame
         max_cycles = max(len(e) for e in cyclic_data) if cyclic_data else 0
@@ -77,11 +101,18 @@ class Plotter:
         else:
             df = pd.DataFrame()
             
+        # Calculate cyclic percentage
+        cyclic_best_percentage = (cyclic_best_count / cyclic_total_samples * 100) if cyclic_total_samples > 0 else 0.0
+            
         # Load forward annealing results
-        forward_stats = (float('inf'), 0.0, float('inf'), 0)  # mean, std, min, count
+        forward_stats = (float('inf'), 0.0, 0.0, float('inf'), 0, 0.0)  # mean, q25, q75, min, count, percentage
         
         if forward_path.exists():
             energies = []
+            forward_best_energy = float('inf')
+            forward_best_count = 0
+            forward_num_calls = 0
+            
             for result_file in forward_path.glob('*.npz'):
                 data = np.load(result_file)
                 # Check if this file has the required number of samples
@@ -89,17 +120,36 @@ class Plotter:
                     total_samples = sum(data['num_occurrences']) if 'num_occurrences' in data else None
                     if total_samples != num_samples:
                         continue
-                energies.append(min(data['energies']))
+                
+                file_energies = data['energies']
+                file_num_occurrences = data['num_occurrences']
+                
+                min_energy = float(np.min(file_energies))
+                energies.append(min_energy)
+                
+                # Track best energy in this file for percentage calculation
+                if min_energy < forward_best_energy:
+                    forward_best_energy = min_energy
+                    forward_best_count = int(file_num_occurrences[np.argmin(file_energies)])
+                
+                forward_num_calls += 1
+            
             if energies:
                 min_energy = float(min(energies))
+                # Percentage is based on one call (num_reps in one sampler call)
+                forward_best_percentage = (forward_best_count / num_samples * 100) if num_samples else 0.0
+                q25 = float(np.percentile(energies, 25))
+                q75 = float(np.percentile(energies, 75))
                 forward_stats = (
-                    float(np.mean(energies)),  # mean
-                    float(np.std(energies)),   # std
-                    min_energy,                # min
-                    len(energies)              # count
+                    float(np.mean(energies)),      # mean
+                    q25,                           # 25th percentile
+                    q75,                           # 75th percentile
+                    min_energy,                    # min
+                    forward_num_calls,             # number of sampler calls
+                    forward_best_percentage        # percentage in one call
                 )
                 
-        return df, forward_stats
+        return df, forward_stats, offset, cyclic_best_percentage
     
     def load_ground_state_energy(self, instance_type: str = 'static', instance_id: str | None = None, 
                                 num_timepoints: int | None = None, n_nodes: int | None = None) -> float | None:
@@ -162,8 +212,9 @@ class Plotter:
                 return None
     
     def plot_instance(self, solver_id: str, n_nodes: int | None = None, save_dir: Path | str | None = None,
-                     num_samples: int | None = None, init_type: str = 'all', instance_type: str = 'static',
-                     instance_id: str | None = None, num_timepoints: int | None = None):
+                     num_samples: int | None = 1000, init_type: str = 'all', instance_type: str = 'static',
+                     instance_id: str | None = None, num_timepoints: int | None = None, show_gap: bool = True,
+                     use_ancilla: bool = False):
         """Create plot for a specific instance.
         
         Args:
@@ -175,10 +226,13 @@ class Plotter:
             instance_type: Either 'static' or 'dynamics'
             instance_id: ID of the dynamics instance (required if instance_type='dynamics')
             num_timepoints: Number of timepoints for dynamics instances
+            show_gap: If True, display gap (min_energy + offset) instead of raw energy
+            use_ancilla: If True, plot results with ancilla; if False, plot results without ancilla
         """
-        df, forward_stats = self.load_results(solver_id, n_nodes=n_nodes, num_samples=num_samples, 
+        df, forward_stats, offset, cyclic_best_percentage = self.load_results(solver_id, n_nodes=n_nodes, num_samples=num_samples, 
                                             init_type=init_type, instance_type=instance_type,
-                                            instance_id=instance_id, num_timepoints=num_timepoints)
+                                            instance_id=instance_id, num_timepoints=num_timepoints,
+                                            use_ancilla=use_ancilla)
 
         # Load ground state energy
         ground_energy = self.load_ground_state_energy(
@@ -191,7 +245,15 @@ class Plotter:
         if df.empty:
             print(f"No data found for N={n_nodes}, solver {solver_id}")
             return
-            
+        
+        # If showing gap, add offset to all energies
+        if show_gap:
+            df = df + offset
+            if ground_energy is not None:
+                ground_energy = ground_energy + offset
+            forward_stats = tuple(x + offset if isinstance(x, (int, float)) and x != float('inf') and x != 0 and i < 4 else x 
+                                 for i, x in enumerate(forward_stats))
+        
         # Calculate statistics
         mean = df.mean(axis=1)
         min_per_cycle = df.min(axis=1)
@@ -202,17 +264,18 @@ class Plotter:
         plt.figure(figsize=(10, 6))
         
         # Plot cyclic annealing results
-        n_cyclic = len(df.columns)  # number of cyclic annealing runs
+        n_cyclic_calls = len(df.columns)  # number of cyclic annealing runs
+        
         plt.plot(cycles, mean, 'b-', 
-                label=f'Cyclic Annealing Mean (n={n_cyclic})')
+                label=f'Cyclic Annealing (n={n_cyclic_calls} calls)')
         plt.fill_between(cycles, min_per_cycle, max_per_cycle, alpha=0.2, color='b')
         
         # Plot lowest cyclic energy found
         min_cyclic = df.min().min()  # minimum across all cycles and runs
         plt.axhline(y=min_cyclic, color='b', linestyle=':', 
                    label='Best Cyclic Result')
-        # Add annotation for cyclic minimum
-        plt.annotate(f'E = {min_cyclic:.6f}',
+        # Add annotation for cyclic minimum with percentage
+        plt.annotate(f'E = {min_cyclic:.6f}\n({cyclic_best_percentage:.5}%)',
                     xy=(len(cycles)-2, min_cyclic),
                     xytext=(0, 10), textcoords='offset points',
                     ha='left', va='bottom',
@@ -220,18 +283,19 @@ class Plotter:
                     color='b')
         
         # Plot forward annealing result with error bar
-        forward_mean, forward_std, forward_min, forward_count = forward_stats
+        forward_mean, forward_q25, forward_q75, forward_min, forward_count, forward_percentage = forward_stats
         if forward_mean != float('inf'):
             plt.axhline(y=forward_mean, color='r', linestyle='--', 
-                       label=f'Forward Annealing Mean (n={forward_count})')
+                       label=f'Forward Annealing (n={forward_count} calls)')
             if forward_count > 1:  # Only show error band if we have multiple runs
-                plt.axhspan(forward_min, forward_mean + forward_std,
+                # Plot IQR (interquartile range) from 25th to 75th percentile
+                plt.axhspan(forward_q25, forward_q75,
                           color='r', alpha=0.2)
                 # Plot lowest forward energy found
                 plt.axhline(y=forward_min, color='r', linestyle=':', 
                           label='Best Forward Result')
-                # Add annotation for forward minimum
-                plt.annotate(f'E = {forward_min:.6f}',
+                # Add annotation for forward minimum with percentage
+                plt.annotate(f'E = {forward_min:.6f}\n({forward_percentage:.1f}%)',
                            xy=(3, forward_min),
                            xytext=(-10, -10), textcoords='offset points',
                            ha='right', va='top',
@@ -253,24 +317,28 @@ class Plotter:
                         color='gray')
         
         plt.xlabel('Cycle')
-        plt.ylabel('Energy')
+        y_label = 'Gap (E + offset)' if show_gap else 'Energy'
+        plt.ylabel(y_label)
         samples_str = f", {num_samples} samples" if num_samples else ""
         init_str = f", {init_type} init" if init_type != 'all' else ""
+        ancilla_str = " (with ancilla)" if use_ancilla else " (no ancilla)"
         
         if instance_type == 'dynamics':
-            title = f'Energy vs Cycle (dynamics_{instance_id}, timepoints={num_timepoints}, Solver {solver_id}{samples_str}{init_str})'
+            title = f'{y_label} vs Cycle (dynamics_{instance_id}, timepoints={num_timepoints}, Solver {solver_id}{samples_str}{init_str}){ancilla_str}'
         else:
-            title = f'Energy vs Cycle (N={n_nodes}, Solver {solver_id}{samples_str}{init_str})'
+            title = f'{y_label} vs Cycle (N={n_nodes}, Solver {solver_id}{samples_str}{init_str}){ancilla_str}'
         
         plt.title(title)
         plt.legend()
         plt.grid(True)
         
         if save_dir:
+            ancilla_suffix = "_with_ancilla" if use_ancilla else "_no_ancilla"
+                
             if instance_type == 'dynamics':
-                save_path = Path(save_dir) / f'energy_dynamics_{instance_id}_timepoints_{num_timepoints}_solver{solver_id}.png'
+                save_path = Path(save_dir) / f'gap_dynamics_{instance_id}_timepoints_{num_timepoints}_solver{solver_id}{ancilla_suffix}.png' if show_gap else Path(save_dir) / f'energy_dynamics_{instance_id}_timepoints_{num_timepoints}_solver{solver_id}{ancilla_suffix}.png'
             else:
-                save_path = Path(save_dir) / f'energy_N{n_nodes}_solver{solver_id}.png'
+                save_path = Path(save_dir) / f'gap_N{n_nodes}_solver{solver_id}{ancilla_suffix}.png' if show_gap else Path(save_dir) / f'energy_N{n_nodes}_solver{solver_id}{ancilla_suffix}.png'
             plt.savefig(save_path)
             plt.close()
         else:

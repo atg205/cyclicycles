@@ -6,6 +6,7 @@
 
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple, Optional
+import dwave
 
 import numpy as np
 
@@ -190,7 +191,7 @@ class DWaveCyclicAnnealer:
             kwargs['chain_strength'] = self.chain_strength
 
         sampleset = self.sampler.sample(bqm, **kwargs)
-
+        #dwave.inspector.show(sampleset)
         # Score by the original (J,h) energy ignoring ancilla
         bqm_original = bqm_from_J_h(J, h)
         best_s = None

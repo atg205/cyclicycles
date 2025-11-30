@@ -105,3 +105,85 @@ class Instance:
         dynamics = self.load_dynamics_instances() if include_dynamics else {}
         
         return static, dynamics
+    
+    def remove_linear_terms_with_ancilla(self, h: dict, J: dict, ancilla_ratio: int = 1, offset: float = 0.0):
+        """Transform an Ising problem with linear terms to one with only quadratic terms using ancilla qubits.
+        
+        This implements the reduction technique from supplementary material S1, where linear biases h_i
+        are eliminated by introducing ancilla qubits s_{N+k} (for k=1..num_ancilla).
+        
+        Each group of `ancilla_ratio` original qubits shares one ancilla qubit. The ancilla qubit s_anc
+        is coupled to qubits in its group with coupling h_i, effectively moving the linear bias to a
+        quadratic term: h_i * s_i * s_anc
+        
+        Args:
+            h (dict): Dictionary of linear terms {qubit: bias}
+            J (dict): Dictionary of quadratic terms {(i,j): coupling}
+            ancilla_ratio (int): Number of original qubits per ancilla qubit. Default is 1 (one ancilla per qubit).
+                                If > 1, multiple qubits share the same ancilla (reduces qubit count).
+            offset (float): Energy offset from the original problem
+            
+        Returns:
+            dict: Dictionary containing:
+                - 'h': Empty dict (no linear terms)
+                - 'J': New quadratic terms dict (original J + ancilla couplings)
+                - 'offset': Original offset
+                - 'num_variables': Total number of variables (original + ancilla)
+                - 'num_original': Number of original variables
+                - 'num_ancilla': Number of ancilla variables
+                - 'ancilla_mapping': Dict mapping ancilla qubit to list of original qubits it couples to
+        """
+        if not h:
+            return {
+                'h': {},
+                'J': J,
+                'offset': offset,
+                'num_variables': len(set([i for (i,j) in J.keys()] + [j for (i,j) in J.keys()])),
+                'num_original': len(set([i for (i,j) in J.keys()] + [j for (i,j) in J.keys()])),
+                'num_ancilla': 0,
+                'ancilla_mapping': {}
+            }
+        
+        # Get original qubits from h dict
+        original_qubits = sorted(list(h.keys()))
+        num_original = len(original_qubits)
+        
+        # Calculate number of ancilla qubits needed
+        num_ancilla = (num_original + ancilla_ratio - 1) // ancilla_ratio
+        max_qubit = max([max(i, j) for (i, j) in J.keys()]) if J else max(original_qubits)
+        
+
+        J_new = dict(J)
+        ancilla_mapping = {}
+        h_new = {}
+        
+        for ancilla_idx in range(num_ancilla):
+            # Ancilla qubit index
+            ancilla_qubit = max_qubit + 1 + ancilla_idx
+            
+            # Which original qubits does this ancilla couple to?
+            start_qubit_idx = ancilla_idx * ancilla_ratio
+            end_qubit_idx = min((ancilla_idx + 1) * ancilla_ratio, num_original)
+            coupled_qubits = original_qubits[start_qubit_idx:end_qubit_idx]
+            
+            ancilla_mapping[ancilla_qubit] = coupled_qubits
+            h_new[ancilla_qubit] = -2
+            # Add coupling between ancilla and each original qubit in its group
+            for original_qubit in coupled_qubits:
+                coupling_strength = h[original_qubit]
+
+                # Store as (min, max) tuple for consistent ordering
+                if coupling_strength > 0.0:
+                    edge = tuple(sorted([original_qubit, ancilla_qubit]))
+                    J_new[edge] = coupling_strength
+        offset += num_ancilla * 2
+        
+        return {
+            'h': h_new,  # No linear terms in the new problem
+            'J': J_new,
+            'offset': offset,
+            'num_variables': num_original + num_ancilla,
+            'num_original': num_original,
+            'num_ancilla': num_ancilla,
+            'ancilla_mapping': ancilla_mapping
+        }
