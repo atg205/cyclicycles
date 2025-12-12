@@ -1,6 +1,6 @@
 from cyclicycles.runner import Runner
 from tqdm import tqdm
-runner = Runner(sampler='1.8')
+runner = Runner(sampler='1.9')
 num_cycles = 10
 instance_type = 'dynamics'
 instances = ["3"]
@@ -10,10 +10,9 @@ for use_ancilla in [False]:
     print(f"\n\n========== Running with use_ancilla={use_ancilla} ==========\n")
     for instance in instances:
         for timepoints in [12]:
-            for i in tqdm(range(1)):
-                """
+            for i in tqdm(range(3)):
                 print("_________ instance __________")
-                # Run cyclic annealing
+                # Run cycli           c annealing
                 response, results, cycle_energies = runner.execute_cyclic_annealing(
                     num_reads=1000,
                     num_cycles=num_cycles,
@@ -25,7 +24,7 @@ for use_ancilla in [False]:
                 )
                 print(f"Energy progression: {cycle_energies}")
                 print(f"Best energy found: {results['best_energy']}")
-"""
+                continue
                 # Run forward annealing
                 for _ in range(num_cycles):
                     response, results = runner.execute_instance(

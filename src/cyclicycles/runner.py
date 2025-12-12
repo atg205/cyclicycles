@@ -1,7 +1,8 @@
 from pathlib import Path
 import numpy as np
 import json
-from dwave.system import DWaveSampler, EmbeddingComposite
+import pickle
+from dwave.system import DWaveSampler, EmbeddingComposite, FixedEmbeddingComposite
 import dimod
 from .instance import Instance
 from config import RESULT_DIR, INSTANCE_DIR, DATA_DIR, ensure_dir
@@ -33,8 +34,8 @@ class Runner:
         ]
 
         # Configure D-Wave sampler based on solver ID
-        if self.sampler == "1.8":  # zephyr
-            self.qpu = DWaveSampler(solver="Advantage2_system1.8")
+        if self.sampler == "1.9":  # zephyr
+            self.qpu = DWaveSampler(solver="Advantage2_system1.9")
         elif self.sampler == "6.4":
             self.qpu = DWaveSampler(solver="Advantage_system6.4")
         elif self.sampler == "4.1":
@@ -58,6 +59,30 @@ class Runner:
                 json.dump(time_dict, f)
         except Exception as e:
             print(f"Error logging access time: {e}")
+
+    def _get_or_create_embedding(self, instance_type: str, instance_id: str | None = None,
+                                 num_timepoints: int = 5, n_nodes: str | None = None,
+                                 h: dict | None = None, J: dict | None = None) -> EmbeddingComposite:
+        """Get embedding composite for the problem instance.
+        
+        This method returns an EmbeddingComposite, which computes a heuristic embedding
+        for the given problem. The embedding is computed fresh each time to avoid issues
+        with caching and serialization of D-Wave objects.
+        
+        Args:
+            instance_type (str): Either 'static' or 'dynamics'.
+            instance_id (str, optional): ID of the dynamics instance.
+            num_timepoints (int): Number of timepoints for dynamics instances.
+            n_nodes (str, optional): Number of nodes for static instances.
+            h (dict, optional): Linear terms.
+            J (dict, optional): Quadratic terms.
+            
+        Returns:
+            EmbeddingComposite: Composite sampler with heuristic embedding.
+        """
+        print(f"Creating EmbeddingComposite for heuristic embedding")
+        # EmbeddingComposite will compute a fresh embedding for each problem
+        return EmbeddingComposite(self.dw_sampler)
 
     def _load_and_prepare_problem(self, n_nodes: str | None, instance_type: str, instance_id: str | None,
                                   num_timepoints: int, use_ancilla_transformation: bool = False, 
@@ -181,11 +206,7 @@ class Runner:
             tuple: (final_response, result_data, cycle_energies)
         """
     
-        # Setup embedding for dynamics instances
-        if instance_type == 'dynamics':
-            self.dw_sampler = EmbeddingComposite(self.dw_sampler)
-        
-        # Load and prepare problem
+        # Load and prepare problem first to get instance details
         problem = self._load_and_prepare_problem(n_nodes, instance_type, instance_id, num_timepoints,
                                                   use_ancilla_transformation, ancilla_ratio)
         
@@ -193,6 +214,10 @@ class Runner:
         J = problem['J']
         offset = problem['offset']
         n_nodes = problem['n_nodes']
+        
+        # Setup embedding (cached) for dynamics instances
+        if instance_type == 'dynamics':
+            self.dw_sampler = self._get_or_create_embedding(instance_type, instance_id, num_timepoints, n_nodes, h, J)
         
         used_qubits = set([i for (i,j) in J.keys()] + [j for (i,j) in J.keys()])
         initial_state = {qubit: 0 if qubit in used_qubits else 3 for qubit in self.qpu.nodelist}
@@ -342,11 +367,7 @@ class Runner:
         Returns:
             tuple: (response object, instance_info)
         """
-        # Setup embedding for dynamics instances
-        if instance_type == 'dynamics':
-            self.dw_sampler = EmbeddingComposite(self.dw_sampler)
-        
-        # Load and prepare problem
+        # Load and prepare problem first to get instance details
         problem = self._load_and_prepare_problem(n_nodes, instance_type, instance_id, num_timepoints,
                                                   use_ancilla_transformation, ancilla_ratio)
         
@@ -354,6 +375,10 @@ class Runner:
         J = problem['J']
         offset = problem['offset']
         n_nodes = problem['n_nodes']
+        
+        # Setup embedding (cached) for dynamics instances
+        if instance_type == 'dynamics':
+            self.dw_sampler = self._get_or_create_embedding(instance_type, instance_id, num_timepoints, n_nodes, h, J)
 
 
         #dwave.inspector.show(response)

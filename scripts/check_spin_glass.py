@@ -32,8 +32,8 @@ def main():
     J_terms = i.load_instances()[args.n_nodes]
 
     sampler = args.sampler
-    if sampler == "1.6":  # zephyr
-        qpu = DWaveSampler(solver="Advantage2_system1.6")
+    if sampler == "1.9":  # zephyr
+        qpu = DWaveSampler(solver="Advantage2_system1.9")
     elif sampler == "6.4":
         qpu = DWaveSampler(solver="Advantage_system6.4")
     elif sampler == "4.1":
