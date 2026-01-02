@@ -20,8 +20,8 @@ def get_qpu_graph(sampler_id: str) -> Set[Tuple[int, int]]:
     Returns:
         Set of tuples representing available qubit connections
     """
-    if sampler_id == "1.9":  # Advantage2
-        qpu = DWaveSampler(solver="Advantage2_system1.9")
+    if sampler_id == "1.10":  # Advantage2
+        qpu = DWaveSampler(solver="Advantage2_system1.10")
     elif sampler_id == "6.4":  # Advantage
         qpu = DWaveSampler(solver="Advantage_system6.4")
     else:

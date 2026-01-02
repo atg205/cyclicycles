@@ -267,7 +267,7 @@ class Plotter:
         n_cyclic_calls = len(df.columns)  # number of cyclic annealing runs
         
         plt.plot(cycles, mean, 'b-', 
-                label=f'Cyclic Annealing (n={n_cyclic_calls} calls)')
+                label=f'Cyclic Annealing Mean')# (n={n_cyclic_calls} calls)')
         plt.fill_between(cycles, min_per_cycle, max_per_cycle, alpha=0.2, color='b')
         
         # Plot lowest cyclic energy found
@@ -286,7 +286,7 @@ class Plotter:
         forward_mean, forward_q25, forward_q75, forward_min, forward_count, forward_percentage = forward_stats
         if forward_mean != float('inf'):
             plt.axhline(y=forward_mean, color='r', linestyle='--', 
-                       label=f'Forward Annealing (n={forward_count} calls)')
+                       label=f'Forward Annealing Mean')# (n={forward_count} calls)')
             if forward_count > 1:  # Only show error band if we have multiple runs
                 # Plot IQR (interquartile range) from 25th to 75th percentile
                 plt.axhspan(forward_q25, forward_q75,
@@ -303,6 +303,7 @@ class Plotter:
                            color='r')
             
         plt.xlim(1,len(cycles))
+        plt.ylim(0,)
         # Plot ground state energy if available
         if ground_energy is not None:
             plt.axhline(y=ground_energy, color='g', linestyle=':', 
@@ -313,7 +314,7 @@ class Plotter:
                         xy=(len(cycles)/2, ground_energy),
                         xytext=(0, 10), textcoords='offset points',
                         ha='left', va='bottom',
-                        bbox=dict(boxstyle='round,pad=0.5', fc='white', ec='b', alpha=0.8),
+                        bbox=dict(boxstyle='round,pad=0.5', fc='white', ec='gray', alpha=0.8),
                         color='gray')
         
         plt.xlabel('Cycle')

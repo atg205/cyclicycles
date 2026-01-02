@@ -34,8 +34,8 @@ class Runner:
         ]
 
         # Configure D-Wave sampler based on solver ID
-        if self.sampler == "1.9":  # zephyr
-            self.qpu = DWaveSampler(solver="Advantage2_system1.9")
+        if self.sampler == "1.10":  # zephyr
+            self.qpu = DWaveSampler(solver="Advantage2_system1.10")
         elif self.sampler == "6.4":
             self.qpu = DWaveSampler(solver="Advantage_system6.4")
         elif self.sampler == "4.1":
@@ -270,7 +270,8 @@ class Runner:
                     anneal_schedule=self.anneal_schedule,
                     initial_state=best_state,
                     reinitialize_state=True,
-                    h_gain_schedule=self.h_gain_schedule
+                    h_gain_schedule=self.h_gain_schedule,
+                    chain_break_fraction=False
                 )
                 final_response = response  # Keep track of last response
                 #dwave.inspector.show(final_response)
@@ -279,10 +280,11 @@ class Runner:
                     if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
                         self._log_access_time(response.info['timing']['qpu_access_time'])
                     success = True
-                except:
+                except Exception as e:
                     print(f"Retry {tries}")
+                    print(e)
                     tries += 1
-                    if tries > 10:
+                    if tries > 20:
                         raise Exception("Too many retries for sampling")
             
             # Find best solution from this cycle
@@ -393,14 +395,16 @@ class Runner:
                     h=h,
                     J=J,
                     num_reads=num_reads,
+                    chain_break_fraction=False
                 )
                 if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
                     self._log_access_time(response.info['timing']['qpu_access_time'])
                 success = True
-            except:
+            except Exception as e:
                 print(f"Retry {tries}")
+                print(e)
                 tries += 1
-                if tries > 10:
+                if tries > 20:
                     raise Exception("Too many retries for sampling")
         
         # Save results

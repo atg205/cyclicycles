@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 import numpy as np
-from config import INSTANCE_DIR, DYNAMICS_INSTANCE_DIR
+from cyclicycles.config import INSTANCE_DIR, DYNAMICS_INSTANCE_DIR
 import json
 import dimod
 
