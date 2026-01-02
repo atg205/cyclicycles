@@ -51,23 +51,23 @@ def calculate_tts(p_success: float, p_target: float = 0.99, runtime_ms: float = 
     return tts
 
 
-def load_and_analyze_results(solver_id: str, instance_id: str, num_timepoints: int, 
-                            use_ancilla: bool = False) -> tuple[dict | None, dict | None, int | None]:
-    """Load and analyze forward and cyclic annealing results.
+def load_and_analyze_results(solver_versions: list[str], instance_id: str, num_timepoints: int, 
+                            use_ancilla: bool = False) -> tuple[dict | None, dict | None, int | None, int, int]:
+    """Load and analyze forward and cyclic annealing results across all solver versions.
     
     Uses the same logic as plot_instance: when gap (energy + offset) == 0, ground state is found.
     
     Args:
-        solver_id: The solver ID (e.g., '4.1', '6.4')
+        solver_versions: List of solver versions to aggregate (e.g., ['4.1'] or ['1.8', '1.9', '1.10'])
         instance_id: ID of the dynamics instance
         num_timepoints: Number of timepoints
         use_ancilla: Whether to load results with ancilla
         
     Returns:
-        tuple: (forward_analysis, cyclic_analysis, num_qubits)
+        tuple: (forward_analysis, cyclic_analysis, num_qubits, num_forward_files, num_cyclic_files)
     """
     plotter = Plotter(RESULT_DIR)
-    instance = Instance(solver=solver_id)
+    instance = Instance(solver=solver_versions[0])
     
     # Get number of qubits
     dynamics_instances = instance.load_dynamics_instances(number_time_points=num_timepoints)
@@ -79,7 +79,7 @@ def load_and_analyze_results(solver_id: str, instance_id: str, num_timepoints: i
     
     # Load results to get offset
     cyclic_df, forward_stats, offset, cyclic_best_percentage = plotter.load_results(
-        solver_id=solver_id,
+        solver_id=solver_versions[0],
         instance_type='dynamics',
         instance_id=instance_id,
         num_timepoints=num_timepoints,
@@ -92,43 +92,46 @@ def load_and_analyze_results(solver_id: str, instance_id: str, num_timepoints: i
     # When we add offset: gnd_energy_binary + offset gives us the SPIN-space value
     gnd_energy_spin = 0.0
     
-    # Forward annealing analysis - iterate over all result files (no realization structure)
+    # Forward annealing analysis - iterate over all result files across all solver versions
     forward_analysis = None
-    if use_ancilla:
-        forward_path = RESULT_DIR / 'forward' / solver_id / f'dynamics_{instance_id}_timepoints_{num_timepoints}_with_ancilla'
-    else:
-        forward_path = RESULT_DIR / 'forward' / solver_id / f'dynamics_{instance_id}_timepoints_{num_timepoints}_no_ancilla'
-
     total_time_ms_fw = 0.0
     total_samples_fw = 0
     successful_samples_fw = 0
     num_calls_fw = 0
+    num_forward_files = 0
     
-    if forward_path.exists():
-        for result_file in forward_path.glob('*.npz'):
-            data = np.load(result_file, allow_pickle=True)
-            
-            # Get timing
-            timing_info = data['timing'].item() if isinstance(data['timing'], np.ndarray) else data['timing']
-            if isinstance(timing_info, dict) and 'qpu_access_time' in timing_info:
-                total_time_ms_fw += timing_info['qpu_access_time'] * 1e-3  # Convert μs to ms
-            
-            # Get energies and calculate gap
-            energies = data['energies']
-            num_occurrences = data['num_occurrences']
-            offset_val = float(data.get('offset', 0.0))
-            
-            # Gap = energy + offset (in SPIN space with offset)
-            gaps = energies + offset_val
-            # Ground state found when gap == 0 (within tolerance)
-            tol = 1e-6
-            found_indices = np.where(np.abs(gaps) < tol)[0]
-            
-            if len(found_indices) > 0:
-                successful_samples_fw += int(np.sum(num_occurrences[found_indices]))
-            
-            total_samples_fw += int(np.sum(num_occurrences))
-            num_calls_fw += 1
+    ancilla_suffix = '_with_ancilla' if use_ancilla else '_no_ancilla'
+    
+    # Load forward results from all solver versions
+    for solver_version in solver_versions:
+        forward_path = RESULT_DIR / 'forward' / solver_version / f'dynamics_{instance_id}_timepoints_{num_timepoints}{ancilla_suffix}'
+        
+        if forward_path.exists():
+            for result_file in forward_path.glob('*.npz'):
+                data = np.load(result_file, allow_pickle=True)
+                
+                # Get timing
+                timing_info = data['timing'].item() if isinstance(data['timing'], np.ndarray) else data['timing']
+                if isinstance(timing_info, dict) and 'qpu_access_time' in timing_info:
+                    total_time_ms_fw += timing_info['qpu_access_time'] * 1e-3  # Convert μs to ms
+                
+                # Get energies and calculate gap
+                energies = data['energies']
+                num_occurrences = data['num_occurrences']
+                offset_val = float(data.get('offset', 0.0))
+                
+                # Gap = energy + offset (in SPIN space with offset)
+                gaps = energies + offset_val
+                # Ground state found when gap == 0 (within tolerance)
+                tol = 1e-6
+                found_indices = np.where(np.abs(gaps) < tol)[0]
+                
+                if len(found_indices) > 0:
+                    successful_samples_fw += int(np.sum(num_occurrences[found_indices]))
+                
+                total_samples_fw += int(np.sum(num_occurrences))
+                num_calls_fw += 1
+                num_forward_files += 1
     
     if num_calls_fw > 0:
         p_success_fw = successful_samples_fw / total_samples_fw if total_samples_fw > 0 else 0.0
@@ -145,22 +148,25 @@ def load_and_analyze_results(solver_id: str, instance_id: str, num_timepoints: i
             'total_samples': total_samples_fw
         }
     
-    # Cyclic annealing analysis - iterate over all realizations
+    # Cyclic annealing analysis - iterate over all realizations across all solver versions
     cyclic_analysis = None
     cyclic_tts_values = []  # Store TTS from each realization
+    num_cyclic_files = 0
     
-    # Find all realization directories for this instance
-    parent_dir = RESULT_DIR / solver_id
-    ancilla_suffix = '_with_ancilla' if use_ancilla else '_no_ancilla'
     realization_pattern = f'dynamics_{instance_id}_timepoints_{num_timepoints}{ancilla_suffix}_realization_*'
     
-    realization_dirs = sorted(parent_dir.glob(realization_pattern))
+    # Collect realization directories from all solver versions
+    all_realization_dirs = []
+    for solver_version in solver_versions:
+        parent_dir = RESULT_DIR / solver_version
+        realization_dirs = sorted(parent_dir.glob(realization_pattern))
+        all_realization_dirs.extend(realization_dirs)
     
-    if not realization_dirs:
-        return forward_analysis, cyclic_analysis, num_qubits
+    if not all_realization_dirs:
+        return forward_analysis, cyclic_analysis, num_qubits, num_forward_files, num_cyclic_files
     
     # Process each realization
-    for cyclic_path in realization_dirs:
+    for cyclic_path in all_realization_dirs:
         total_time_ms_ca = 0.0
         total_samples_ca = 0
         successful_samples_ca = 0
@@ -192,7 +198,8 @@ def load_and_analyze_results(solver_id: str, instance_id: str, num_timepoints: i
             total_samples_ca += int(np.sum(num_occurrences))
             num_files_ca += 1
         
-        # Calculate TTS for this realization
+        # Track total cyclic files
+        num_cyclic_files += num_files_ca
         if num_files_ca > 0:
             p_success_ca = successful_samples_ca / total_samples_ca if total_samples_ca > 0 else 0.0
             runtime_total_ms = total_time_ms_ca  # Total time across all cycles in this realization
@@ -213,14 +220,14 @@ def load_and_analyze_results(solver_id: str, instance_id: str, num_timepoints: i
             'tts_values': cyclic_tts_values
         }
     
-    return forward_analysis, cyclic_analysis, num_qubits
+    return forward_analysis, cyclic_analysis, num_qubits, num_forward_files, num_cyclic_files
 
 
 def main():
     parser = argparse.ArgumentParser(description='Calculate and plot TTS metrics for all dynamics instances')
-    parser.add_argument('--solver', type=str, default="1.10",
-                       choices=['1.6', '1.7', '1.8', "1.10", '4.1', '6.4'],
-                       help='D-Wave solver to analyze')
+    parser.add_argument('--solver', type=str, default="6",
+                       help='D-Wave solver to analyze. Can be a base ID (e.g., 1, 4, 6) to aggregate all versions, '
+                            'or a full version (e.g., 1.8, 4.1, 6.4)')
     parser.add_argument('--save_dir', type=str, default=None,
                        help='Directory to save plot. If not specified, displays plot.')
     parser.add_argument('--ancilla', action='store_true',
@@ -228,35 +235,55 @@ def main():
     
     args = parser.parse_args()
     
+    # Get all solver folders and filter to those matching the specified solver
+    solver_versions = []
+    for solver_dir in RESULT_DIR.iterdir():
+        if solver_dir.is_dir() and not solver_dir.name.startswith('.'):
+            # Check if this folder starts with the specified solver ID
+            if solver_dir.name.split('.')[0] == args.solver or solver_dir.name == args.solver:
+                solver_versions.append(solver_dir.name)
+    
+    # Sort by version number
+    def version_key(v):
+        parts = v.split('.')
+        try:
+            return tuple(int(p) for p in parts)
+        except:
+            return (float('inf'),)
+    
+    solver_versions = sorted(solver_versions, key=version_key)
+    
+    if not solver_versions:
+        print(f"Error: No solver versions found for solver ID: {args.solver}")
+        return
+    
     # Analyze all instances across all timepoints
     forward_data = []  # List of (num_qubits, tts, instance_id, num_timepoints)
     cyclic_data = []   # List of (num_qubits, tts, instance_id, num_timepoints)
+    cyclic_no_solution = []   # List of (num_qubits, p_success, instance_id, num_timepoints) when TTS can't be calculated
     
-    print(f"\nAnalyzing all dynamics instances (solver: {args.solver}, ancilla: {args.ancilla})\n")
-    print(f"{'Instance ID':<20} {'Timepoints':<12} {'Qubits':<10} {'Forward TTS (ms)':<20} {'Cyclic TTS (ms)':<20}")
-    print("-" * 90)
+    print(f"\nAnalyzing all dynamics instances (solver: {args.solver} -> {solver_versions}, ancilla: {args.ancilla})\n")
+    print(f"{'Instance ID':<20} {'Timepoints':<12} {'Qubits':<10} {'Forward TTS (ms)':<20} {'#FW':<5} {'Cyclic TTS (ms)':<20} {'#CA':<5}")
+    print("-" * 105)
     
-    # Get all available timepoints by checking what's in the result directory
-    result_base = RESULT_DIR / args.solver
-    if not result_base.exists():
-        print(f"No results found for solver {args.solver}")
-        return
-    
-    # Extract unique timepoints from directory names
+    # Extract unique timepoints from all solver versions
     timepoints_set = set()
-    for entry in result_base.iterdir():
-        if entry.is_dir():
-            # Look for patterns like: dynamics_{id}_timepoints_{num}...
-            name = entry.name
-            if 'timepoints_' in name:
-                parts = name.split('timepoints_')
-                if len(parts) > 1:
-                    try:
-                        timepoints_str = parts[1].split('_')[0]
-                        if timepoints_str.isdigit():
-                            timepoints_set.add(int(timepoints_str))
-                    except:
-                        pass
+    for solver_version in solver_versions:
+        result_base = RESULT_DIR / solver_version
+        if result_base.exists():
+            for entry in result_base.iterdir():
+                if entry.is_dir():
+                    # Look for patterns like: dynamics_{id}_timepoints_{num}...
+                    name = entry.name
+                    if 'timepoints_' in name:
+                        parts = name.split('timepoints_')
+                        if len(parts) > 1:
+                            try:
+                                timepoints_str = parts[1].split('_')[0]
+                                if timepoints_str.isdigit():
+                                    timepoints_set.add(int(timepoints_str))
+                            except:
+                                pass
     
     timepoints_list = sorted(list(timepoints_set))
     
@@ -266,7 +293,7 @@ def main():
     
     # For each timepoint, analyze all instances
     for num_timepoints in timepoints_list:
-        instance = Instance(solver=args.solver)
+        instance = Instance(solver=solver_versions[0])
         dynamics_instances = instance.load_dynamics_instances(number_time_points=num_timepoints)
         
         
@@ -274,8 +301,8 @@ def main():
             continue
         
         for instance_id in sorted(dynamics_instances.keys()):
-            forward_analysis, cyclic_analysis, num_qubits = load_and_analyze_results(
-                args.solver, instance_id, num_timepoints, args.ancilla
+            forward_analysis, cyclic_analysis, num_qubits, num_forward_files, num_cyclic_files = load_and_analyze_results(
+                solver_versions, instance_id, num_timepoints, args.ancilla
             )
             
             if num_qubits is None:
@@ -283,22 +310,37 @@ def main():
             
             forward_tts_str = "N/A"
             cyclic_tts_str = "N/A"
+            forward_count_str = ""
+            cyclic_count_str = ""
             
-            if forward_analysis is not None and forward_analysis['tts'] is not None:
-                forward_data.append((num_qubits, forward_analysis['tts'], instance_id, num_timepoints))
-                forward_tts_str = f"{forward_analysis['tts']:.2f}"
-            elif forward_analysis is None:
+            if forward_analysis is not None:
+                forward_count_str = str(num_forward_files)
+                if forward_analysis['tts'] is not None:
+                    forward_data.append((num_qubits, forward_analysis['tts'], instance_id, num_timepoints))
+                    forward_tts_str = f"{forward_analysis['tts']:.2f}"
+            else:
+                forward_count_str = "0"
                 continue
             
-            if cyclic_analysis is not None and cyclic_analysis['tts'] is not None:
-                cyclic_data.append((num_qubits, cyclic_analysis['tts'], instance_id, num_timepoints))
-                cyclic_tts_str = f"{cyclic_analysis['tts']:.2f}"
-            elif cyclic_analysis is None:
+            if cyclic_analysis is not None:
+                cyclic_count_str = str(num_cyclic_files)
+                if cyclic_analysis['tts'] is not None:
+                    cyclic_data.append((num_qubits, cyclic_analysis['tts'], instance_id, num_timepoints))
+                    cyclic_tts_str = f"{cyclic_analysis['tts']:.2f}"
+                else:
+                    # Have data but no solution found
+                    # For cyclic, we need to calculate average p_success from the tts_values
+                    if cyclic_analysis.get('tts_values'):
+                        # We need to recover p_success - but we don't have it directly, so use 0 as placeholder
+                        cyclic_no_solution.append((num_qubits, 0.0, instance_id, num_timepoints))
+                        cyclic_tts_str = "no_sol"
+            else:
+                cyclic_count_str = "0"
                 continue
             
-            print(f"{instance_id:<20} {num_timepoints:<12} {num_qubits:<10} {forward_tts_str:<20} {cyclic_tts_str:<20}")
+            print(f"{instance_id:<20} {num_timepoints:<12} {num_qubits:<10} {forward_tts_str:<20} {forward_count_str:<5} {cyclic_tts_str:<20} {cyclic_count_str:<5}")
     
-    if not forward_data and not cyclic_data:
+    if not forward_data and not cyclic_data and not cyclic_no_solution:
         print("\nNo valid TTS data found for any instances.")
         return
     
@@ -364,6 +406,13 @@ def main():
             ax.annotate(label, (qubits_ca[i], tts_ca[i]), 
                        xytext=(5, -15), textcoords='offset points', fontsize=5, color='darkred')
     
+    # Cyclic annealing - no solution cases (plot as crosses)
+    if cyclic_no_solution:
+        qubits_ca_no = [x[0] for x in cyclic_no_solution]
+        # For y-axis, place at bottom of visible range
+        y_no_ca = [y_min] * len(qubits_ca_no)
+        ax.scatter(qubits_ca_no, y_no_ca, s=150, alpha=0.7, color='darkred', marker='x', linewidths=2.5, zorder=3)
+    
     ax.set_xlabel('Number of Qubits', fontsize=12, fontweight='bold')
     ax.set_ylabel('TTS (milliseconds)', fontsize=12, fontweight='bold')
     ax.set_yscale('log')
@@ -371,8 +420,15 @@ def main():
     ax.grid(True, alpha=0.3, which='both')
     ax.legend(loc='upper left', fontsize=11, framealpha=0.9)
     
+    # Add note about crosses
+    if cyclic_no_solution:
+        ax.text(0.98, 0.02, 'Crosses (×) indicate cyclic annealing instances where no ground state was found',
+               transform=ax.transAxes, fontsize=9, verticalalignment='bottom',
+               horizontalalignment='right', style='italic', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    
     ancilla_suffix = " (with ancilla)" if args.ancilla else " (without ancilla)"
-    ax.set_title(f'TTS Comparison - Solver {args.solver}{ancilla_suffix}', 
+    solver_display = f"{args.solver} ({','.join(solver_versions)})" if len(solver_versions) > 1 else args.solver
+    ax.set_title(f'TTS Comparison - Solver {solver_display}{ancilla_suffix}', 
                  fontsize=14, fontweight='bold', pad=20)
     fig.tight_layout()
     

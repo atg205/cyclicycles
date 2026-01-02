@@ -2,12 +2,23 @@ from pathlib import Path
 import numpy as np
 import json
 import pickle
+import signal
+import threading
 from dwave.system import DWaveSampler, EmbeddingComposite, FixedEmbeddingComposite
 import dimod
 from .instance import Instance
 from config import RESULT_DIR, INSTANCE_DIR, DATA_DIR, ensure_dir
 import dwave.inspector
 import re
+
+class TimeoutException(Exception):
+    """Raised when an operation times out."""
+    pass
+
+def timeout_handler(signum, frame):
+    """Handler for timeout signal."""
+    raise TimeoutException("Operation timed out")
+
 class Runner:
     def __init__(self, sampler='6.4'):
         self.time_path = DATA_DIR / 'time.json'
@@ -80,9 +91,53 @@ class Runner:
         Returns:
             EmbeddingComposite: Composite sampler with heuristic embedding.
         """
-        print(f"Creating EmbeddingComposite for heuristic embedding")
-        # EmbeddingComposite will compute a fresh embedding for each problem
-        return EmbeddingComposite(self.dw_sampler)
+        max_retries = 3
+        timeout_sec = 30
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"Creating EmbeddingComposite for heuristic embedding (attempt {attempt + 1}/{max_retries})...", end=' ', flush=True)
+                
+                # Set up timeout using threading
+                result_container = {'composite': None, 'exception': None}
+                
+                def create_embedding():
+                    try:
+                        result_container['composite'] = EmbeddingComposite(self.dw_sampler)
+                    except Exception as e:
+                        result_container['exception'] = e
+                
+                thread = threading.Thread(target=create_embedding, daemon=True)
+                thread.start()
+                thread.join(timeout=timeout_sec)
+                
+                if thread.is_alive():
+                    print(f"TIMEOUT (>{timeout_sec}s)")
+                    if attempt < max_retries - 1:
+                        print("  Retrying...")
+                        continue
+                    else:
+                        raise TimeoutException(f"EmbeddingComposite creation timed out after {timeout_sec}s")
+                
+                if result_container['exception']:
+                    raise result_container['exception']
+                
+                if result_container['composite'] is None:
+                    raise RuntimeError("Failed to create EmbeddingComposite")
+                
+                print("OK")
+                return result_container['composite']
+                
+            except TimeoutException as e:
+                if attempt == max_retries - 1:
+                    raise
+                print(f"TIMEOUT (>{timeout_sec}s)")
+                print("  Retrying...")
+            except Exception as e:
+                print(f"ERROR: {str(e)}")
+                raise
+        
+        raise RuntimeError(f"Failed to create EmbeddingComposite after {max_retries} attempts")
 
     def _load_and_prepare_problem(self, n_nodes: str | None, instance_type: str, instance_id: str | None,
                                   num_timepoints: int, use_ancilla_transformation: bool = False, 
