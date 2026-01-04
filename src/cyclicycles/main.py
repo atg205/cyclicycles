@@ -3,18 +3,16 @@ from tqdm import tqdm
 runner = Runner(sampler="1.10")
 num_cycles = 5
 instance_type = 'dynamics'
-instances = [str(i) for i in range(5,8)]
-instances = ['3']
+instances = [str(i) for i in range(5,8)][::-1]
 import time
 
 # Experiment with and without ancilla
 for use_ancilla in [False]:
     print(f"\n\n========== Running with use_ancilla={use_ancilla} ==========\n")
-    for timepoints in range(5,6):
+    for timepoints in range(3,6):
 
         for instance in instances:
             for i in tqdm(range(3)):
-                
                 print("_________ instance __________")
                 # Run cyclic annealing
                 response, results, cycle_energies = runner.execute_cyclic_annealing(

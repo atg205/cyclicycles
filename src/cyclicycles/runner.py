@@ -7,10 +7,10 @@ import threading
 from dwave.system import DWaveSampler, EmbeddingComposite, FixedEmbeddingComposite
 import dimod
 from .instance import Instance
-from config import RESULT_DIR, INSTANCE_DIR, DATA_DIR, ensure_dir
+from .config import RESULT_DIR, INSTANCE_DIR, DATA_DIR, ensure_dir
 import dwave.inspector
 import re
-
+import time
 class TimeoutException(Exception):
     """Raised when an operation times out."""
     pass
@@ -339,7 +339,8 @@ class Runner:
                     print(f"Retry {tries}")
                     print(e)
                     tries += 1
-                    if tries > 20:
+                    time.sleep(3)
+                    if tries > 50:
                         raise Exception("Too many retries for sampling")
             
             # Find best solution from this cycle
