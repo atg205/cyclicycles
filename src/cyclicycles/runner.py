@@ -49,8 +49,8 @@ class Runner:
             self.qpu = DWaveSampler(solver="Advantage2_system1.10")
         elif self.sampler == "6.4":
             self.qpu = DWaveSampler(solver="Advantage_system6.4")
-        elif self.sampler == "4.1":
-            self.qpu = DWaveSampler(solver="Advantage_system4.1")
+        elif self.sampler == "4.3":
+            self.qpu = DWaveSampler(solver="Advantage_system4.3")
         else:
             raise ValueError(f"Invalid solver id: {self.sampler}")
         self.dw_sampler = self.qpu
@@ -95,47 +95,36 @@ class Runner:
         timeout_sec = 30
         
         for attempt in range(max_retries):
-            try:
-                print(f"Creating EmbeddingComposite for heuristic embedding (attempt {attempt + 1}/{max_retries})...", end=' ', flush=True)
-                
-                # Set up timeout using threading
-                result_container = {'composite': None, 'exception': None}
-                
-                def create_embedding():
-                    try:
-                        result_container['composite'] = EmbeddingComposite(self.dw_sampler)
-                    except Exception as e:
-                        result_container['exception'] = e
-                
-                thread = threading.Thread(target=create_embedding, daemon=True)
-                thread.start()
-                thread.join(timeout=timeout_sec)
-                
-                if thread.is_alive():
-                    print(f"TIMEOUT (>{timeout_sec}s)")
-                    if attempt < max_retries - 1:
-                        print("  Retrying...")
-                        continue
-                    else:
-                        raise TimeoutException(f"EmbeddingComposite creation timed out after {timeout_sec}s")
-                
-                if result_container['exception']:
-                    raise result_container['exception']
-                
-                if result_container['composite'] is None:
-                    raise RuntimeError("Failed to create EmbeddingComposite")
-                
-                print("OK")
-                return result_container['composite']
-                
-            except TimeoutException as e:
-                if attempt == max_retries - 1:
-                    raise
+            print(f"Creating EmbeddingComposite for heuristic embedding (attempt {attempt + 1}/{max_retries})...", end=' ', flush=True)
+            
+            # Set up timeout using threading
+            result_container = {'composite': None, 'exception': None}
+            
+            def create_embedding():
+                result_container['composite'] = EmbeddingComposite(self.dw_sampler)
+            
+            thread = threading.Thread(target=create_embedding, daemon=True)
+            thread.start()
+            thread.join(timeout=timeout_sec)
+            
+            if thread.is_alive():
                 print(f"TIMEOUT (>{timeout_sec}s)")
-                print("  Retrying...")
-            except Exception as e:
-                print(f"ERROR: {str(e)}")
-                raise
+                if attempt < max_retries - 1:
+                    print("  Retrying...")
+                    continue
+                else:
+                    raise TimeoutException(f"EmbeddingComposite creation timed out after {timeout_sec}s")
+            
+            if result_container['exception']:
+                raise result_container['exception']
+            
+            if result_container['composite'] is None:
+                raise RuntimeError("Failed to create EmbeddingComposite")
+            
+            print("OK")
+            return result_container['composite']
+                
+           
         
         raise RuntimeError(f"Failed to create EmbeddingComposite after {max_retries} attempts")
 
@@ -316,33 +305,27 @@ class Runner:
             )
             tries = 0
             success = False
-            while not success:
                 # Execute reverse annealing
-                response = self.dw_sampler.sample_ising(
-                    h=h,
-                    J=J,
-                    num_reads=num_reads,
-                    anneal_schedule=self.anneal_schedule,
-                    initial_state=best_state,
-                    reinitialize_state=True,
-                    h_gain_schedule=self.h_gain_schedule,
-                    chain_break_fraction=False
-                )
-                final_response = response  # Keep track of last response
-                #dwave.inspector.show(final_response)
-                # Log access time
-                try:
-                    if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
-                        self._log_access_time(response.info['timing']['qpu_access_time'])
-                    success = True
-                except Exception as e:
-                    print(f"Retry {tries}")
-                    print(e)
-                    tries += 1
-                    time.sleep(3)
-                    if tries > 50:
-                        raise Exception("Too many retries for sampling")
-            
+            response = self.dw_sampler.sample_ising(
+                h=h,
+                J=J,
+                num_reads=num_reads,
+                anneal_schedule=self.anneal_schedule,
+                initial_state=best_state,
+                reinitialize_state=True,
+                h_gain_schedule=self.h_gain_schedule,
+                chain_break_fraction=False
+            )
+            final_response = response  # Keep track of last response
+            #dwave.inspector.show(final_response)
+            # Log access time
+            try:
+                if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
+                    self._log_access_time(response.info['timing']['qpu_access_time'])
+            except:
+                self._log_access_time(400.0)
+
+        
             # Find best solution from this cycle
             min_energy_idx = np.argmin(response.record.energy)
             cycle_min_energy = response.record.energy[min_energy_idx]
@@ -444,25 +427,26 @@ class Runner:
         # Log access time
         success = False
         tries = 0
-        while not success:
             
-            try:
-                response = self.dw_sampler.sample_ising(
-                    h=h,
-                    J=J,
-                    num_reads=num_reads,
-                    chain_break_fraction=False
-                )
-                if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
-                    self._log_access_time(response.info['timing']['qpu_access_time'])
-                success = True
-            except Exception as e:
+        response = self.dw_sampler.sample_ising(
+            h=h,
+            J=J,
+            num_reads=num_reads,
+            chain_break_fraction=False
+        )
+        try:
+            if 'timing' in response.info and 'qpu_access_time' in response.info['timing']:
+                self._log_access_time(response.info['timing']['qpu_access_time'])
+        except:
+            self._log_access_time(300.0)
+        success = True
+        """  except Exception as e:
                 print(f"Retry {tries}")
                 print(e)
                 tries += 1
                 if tries > 20:
                     raise Exception("Too many retries for sampling")
-        
+        """
         # Save results
         # Add ancilla suffix to directory name to separate results
         ancilla_suffix = '_with_ancilla' if use_ancilla_transformation else '_no_ancilla'

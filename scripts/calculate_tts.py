@@ -20,6 +20,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import sys
+import json
 
 # Add the src directory to Python path
 src_dir = Path(__file__).resolve().parent.parent / 'src'
@@ -52,7 +53,7 @@ def calculate_tts(p_success: float, p_target: float = 0.99, runtime_ms: float = 
 
 
 def load_and_analyze_results(solver_versions: list[str], instance_id: str, num_timepoints: int, 
-                            use_ancilla: bool = False) -> tuple[dict | None, dict | None, int | None, int, int]:
+                            use_ancilla: bool = False, filter_cycles: int = None) -> tuple[dict | None, dict | None, int | None, int, int]:
     """Load and analyze forward and cyclic annealing results across all solver versions.
     
     Uses the same logic as plot_instance: when gap (energy + offset) == 0, ground state is found.
@@ -172,6 +173,16 @@ def load_and_analyze_results(solver_versions: list[str], instance_id: str, num_t
         successful_samples_ca = 0
         num_files_ca = 0
         
+        # Extract number of cycles from directory name if filter_cycles is specified
+        if filter_cycles is not None:
+            path_name = cyclic_path.name
+            if '_cycles_' in path_name:
+                num_cycles = int(path_name.split('_')[0])
+                if num_cycles != filter_cycles:
+                    continue
+            else:
+                continue
+        
         for result_file in cyclic_path.glob('*.npz'):
             data = np.load(result_file, allow_pickle=True)
             
@@ -232,6 +243,8 @@ def main():
                        help='Directory to save plot. If not specified, displays plot.')
     parser.add_argument('--ancilla', action='store_true',
                        help='Analyze results with ancilla transformation')
+    parser.add_argument('--cycles', type=int, default=None,
+                       help='Filter to only include samples with this many cycles')
     
     args = parser.parse_args()
     
@@ -286,7 +299,7 @@ def main():
                                 pass
     
     timepoints_list = sorted(list(timepoints_set))
-    
+    print(timepoints_list)
     if not timepoints_list:
         print("No dynamics instances found")
         return
@@ -302,7 +315,7 @@ def main():
         
         for instance_id in sorted(dynamics_instances.keys()):
             forward_analysis, cyclic_analysis, num_qubits, num_forward_files, num_cyclic_files = load_and_analyze_results(
-                solver_versions, instance_id, num_timepoints, args.ancilla
+                solver_versions, instance_id, num_timepoints, args.ancilla, filter_cycles=args.cycles
             )
             
             if num_qubits is None:
@@ -440,6 +453,31 @@ def main():
         save_path = save_dir / f'tts_comparison_{args.solver}{ancilla_str}.png'
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"\nPlot saved to: {save_path}")
+        
+        # Export dynamics (cyclic annealing) data to JSON
+        if cyclic_avg:
+            cycles_str = f"_{args.cycles}cycles" if args.cycles else ""
+            json_filename = f'dynamics_tts_{args.solver}{ancilla_str}{cycles_str}.json'
+            json_path = save_dir / json_filename
+            
+            cyclic_data_points = [{'x': x[0], 'y': x[1]} for x in cyclic_avg]
+            
+            export_data = {
+                'metadata': {
+                    'solver': args.solver,
+                    'solver_versions': solver_versions,
+                    'with_ancilla': args.ancilla,
+                    'cycles_filter': args.cycles,
+                    'description': 'Cyclic annealing TTS data: x = number of qubits, y = Time To Solution (milliseconds)'
+                },
+                'data': cyclic_data_points,
+                'num_points': len(cyclic_data_points)
+            }
+            
+            with open(json_path, 'w') as f:
+                json.dump(export_data, f, indent=2)
+            
+            print(f"Dynamics data exported to: {json_path}")
     else:
         plt.show()
 

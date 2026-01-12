@@ -36,8 +36,8 @@ def main():
         qpu = DWaveSampler(solver="Advantage2_system1.10")
     elif sampler == "6.4":
         qpu = DWaveSampler(solver="Advantage_system6.4")
-    elif sampler == "4.1":
-        qpu = DWaveSampler(solver="Advantage_system4.1")
+    elif sampler == "4.3":
+        qpu = DWaveSampler(solver="Advantage_system4.3")
     else:
         raise ValueError(f"Invalid solver id: {sampler}")
     

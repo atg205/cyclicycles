@@ -275,7 +275,7 @@ class Plotter:
         plt.axhline(y=min_cyclic, color='b', linestyle=':', 
                    label='Best Cyclic Result')
         # Add annotation for cyclic minimum with percentage
-        plt.annotate(f'E = {min_cyclic:.6f}\n({cyclic_best_percentage:.5}%)',
+        plt.annotate(f'E = {min_cyclic:.6f}\n({cyclic_best_percentage:.10}%)',
                     xy=(len(cycles)-2, min_cyclic),
                     xytext=(0, 10), textcoords='offset points',
                     ha='left', va='bottom',
@@ -295,7 +295,7 @@ class Plotter:
                 plt.axhline(y=forward_min, color='r', linestyle=':', 
                           label='Best Forward Result')
                 # Add annotation for forward minimum with percentage
-                plt.annotate(f'E = {forward_min:.6f}\n({forward_percentage:.1f}%)',
+                plt.annotate(f'E = {forward_min:.6f}\n({forward_percentage:.10f}%)',
                            xy=(3, forward_min),
                            xytext=(-10, -10), textcoords='offset points',
                            ha='right', va='top',

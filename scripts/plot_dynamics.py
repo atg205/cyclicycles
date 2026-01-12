@@ -18,7 +18,7 @@ from cyclicycles.config import RESULT_DIR
 def main():
     parser = argparse.ArgumentParser(description='Plot dynamics annealing results')
     parser.add_argument('--solver', type=str, default='6.4',
-                       choices=['1.6', '1.7','1.8',"1.10", '4.1', '6.4'],
+                       choices=['1.6', '1.7','1.8','1.9',"1.10", '4.1', '6.4'],
                        help='D-Wave solver results to plot')
     parser.add_argument('--instance_id', type=str, required=True,
                        help='ID of the dynamics instance to plot')
