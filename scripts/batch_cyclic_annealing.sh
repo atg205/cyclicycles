@@ -4,7 +4,7 @@
 # Runs cyclic annealing for all instances (1-8) and timepoints (2, 6, 7, 8, 9, 10, 11, 12)
 # Each run executes exactly one cyclic annealing sample and exits
 
-TIMEPOINTS=(2 6 7 8 9 10 11 12)
+TIMEPOINTS=(2 3 4 5 6 7 8 9 10 11 12)
 INSTANCES=(1 2 3 4 5 6 7 8)
 NUM_READS=1000
 NUM_CYCLES=5
@@ -44,7 +44,7 @@ for TIMEPOINT in "${TIMEPOINTS[@]}"; do
             
             # Run the Python script and capture the exit code
             python scripts/cyclic_annealing.py \
-                --sampler "1.10" \
+                --sampler "6.4" \
                 --instance-id "$INSTANCE" \
                 --num-timepoints "$TIMEPOINT" \
                 --num-reads "$NUM_READS" \
